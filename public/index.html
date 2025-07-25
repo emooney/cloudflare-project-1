@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Streaming Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        #response {
+            white-space: pre-wrap;
+            background: #f5f5f5;
+            padding: 1.5rem;
+            border-radius: 8px;
+            min-height: 200px;
+            margin: 1rem 0;
+            border: 1px solid #e0e0e0;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem;
+            margin: 0.5rem 0 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Chat</h1>
+        <div>
+            <label for="userInput">Your message:</label>
+            <input type="text" id="userInput" placeholder="Type your message here..." />
+            <button onclick="sendMessage()">Send</button>
+        </div>
+        <div id="response">Response will appear here...</div>
+    </div>
+
+    <script>
+        const userInput = document.getElementById('userInput');
+        const responseDiv = document.getElementById('response');
+        let controller = null;
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            // Abort any existing request
+            if (controller) {
+                controller.abort();
+            }
+            controller = new AbortController();
+
+            // Clear the input and show loading state
+            userInput.value = '';
+            responseDiv.textContent = 'Waiting for response...';
+
+            try {
+                const response = await fetch(`/api/chat?query=${encodeURIComponent(message)}`, {
+                    method: 'GET',
+                    signal: controller.signal
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let done = false;
+
+                // Clear the waiting message on first chunk
+                responseDiv.textContent = '';
+
+                let buffer = '';
+                while (!done) {
+                    const { value, done: doneReading } = await reader.read();
+                    done = doneReading;
+                    if (value) {
+                        // Add new chunk to buffer
+                        buffer += decoder.decode(value, { stream: !done });
+                        
+                        // Process complete lines
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const jsonStr = line.substring(6).trim();
+                                    if (jsonStr === '') continue;
+                                    
+                                    const data = JSON.parse(jsonStr);
+                                    // The AI response is already formatted, just append it
+                                    if (data.response) {
+                                        responseDiv.textContent += data.response;
+                                        // Auto-scroll to bottom
+                                        responseDiv.scrollTop = responseDiv.scrollHeight;
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing JSON:', e, 'Line:', line);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Fetch aborted');
+                } else {
+                    console.error('Error:', error);
+                    responseDiv.textContent = 'Error: Could not get response from the server';
+                }
+            } finally {
+                controller = null;
+            }
+        }
+
+        // Allow pressing Enter to send message
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
